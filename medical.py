@@ -1,10 +1,13 @@
+import streamlit as st
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from PIL import Image
+from io import BytesIO
 
-def tumor_detection(image_path):
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+def tumor_detection(img):
+    # Accepts grayscale image as np array
     blurred = cv2.GaussianBlur(img, (5, 5), 0)
     kernel = np.ones((5, 5), np.uint8)
     opened = cv2.morphologyEx(blurred, cv2.MORPH_OPEN, kernel)
@@ -17,26 +20,31 @@ def tumor_detection(image_path):
     for contour in contours:
         if cv2.contourArea(contour) > 500:
             cv2.drawContours(output, [contour], -1, (0,0,255), 2)
+    return [img, blurred, opened, closed, thresh, clean, output]
 
+def plot_results(images, titles):
     plt.figure(figsize=(15,8))
-    titles = ['Original', 'Blurred', 'Opening', 'Closing', 'Threshold', 'Cleaned', 'Detected Tumor']
-    images = [img, blurred, opened, closed, thresh, clean, output]
-    for i in range(len(images)):
+    for i, (image, title) in enumerate(zip(images, titles)):
         plt.subplot(2,4,i+1)
         if i < len(images)-1:
-            plt.imshow(images[i], cmap='gray')
+            plt.imshow(image, cmap='gray')
         else:
-            plt.imshow(cv2.cvtColor(images[i], cv2.COLOR_BGR2RGB))
-        plt.title(titles[i])
+            plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        plt.title(title)
         plt.axis('off')
-    plt.show()
+    st.pyplot(plt)
+    plt.clf()
 
-# Get folder path from user input (or specify static path)
-dataset_folder = input("Enter path to dataset folder: ")
+st.title("Medical Tumor Detection with Morphological Image Processing")
 
-# Process all PNG/JPG images in given folder
-for file in os.listdir(dataset_folder):
-    if file.endswith(('.png', '.jpg', '.jpeg')):
-        image_path = os.path.join(dataset_folder, file)
-        print(f"Processing {file} ...")
-        tumor_detection(image_path)
+uploaded_files = st.file_uploader("Upload Medical Images", accept_multiple_files=True, type=['png','jpg','jpeg'])
+
+if uploaded_files:
+    titles = ['Original', 'Blurred', 'Opening', 'Closing', 'Threshold', 'Cleaned', 'Detected Tumor']
+    for uploaded_file in uploaded_files:
+        # Read file bytes & convert to grayscale numpy array
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
+        st.write(f"Processing {uploaded_file.name}")
+        results = tumor_detection(img)
+        plot_results(results, titles)
