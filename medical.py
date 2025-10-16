@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def tumor_detection(img):
-    # Process grayscale image using morphological image processing.
+    # Morphological tumor detection pipeline on grayscale image
     blurred = cv2.GaussianBlur(img, (5, 5), 0)
     kernel = np.ones((5, 5), np.uint8)
     opened = cv2.morphologyEx(blurred, cv2.MORPH_OPEN, kernel)
@@ -15,12 +15,12 @@ def tumor_detection(img):
     contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     output = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     for contour in contours:
-        if cv2.contourArea(contour) > 500:
+        if cv2.contourArea(contour) > 500:  # filter by contour size
             cv2.drawContours(output, [contour], -1, (0, 0, 255), 2)
     return [img, blurred, opened, closed, thresh, clean, output]
 
 def plot_results(images, titles):
-    plt.figure(figsize=(15, 8))
+    plt.figure(figsize=(16, 8))
     for i, (image, title) in enumerate(zip(images, titles)):
         plt.subplot(2, 4, i + 1)
         if i < len(images) - 1:
@@ -34,7 +34,7 @@ def plot_results(images, titles):
 
 st.title("Medical Tumor Detection with Morphological Image Processing")
 
-uploaded_files = st.file_uploader("Upload Medical Images", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
+uploaded_files = st.file_uploader("Upload Medical Images (PNG, JPG, JPEG)", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
 
 if uploaded_files:
     titles = ['Original', 'Blurred', 'Opening', 'Closing', 'Threshold', 'Cleaned', 'Detected Tumor']
@@ -45,4 +45,4 @@ if uploaded_files:
         results = tumor_detection(img)
         plot_results(results, titles)
 else:
-    st.text("Please upload at least one medical image file.")
+    st.text("Please upload one or more medical images to analyze.")
