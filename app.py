@@ -7,72 +7,64 @@ st.set_page_config(page_title="Kidney Stone Detection", layout="wide")
 st.title("Kidney Stone Detection from X-ray Images")
 
 # Initialize session_state
-if "image" not in st.session_state:
-    st.session_state.image = None
-if "processed" not in st.session_state:
-    st.session_state.processed = None
-if "enhanced" not in st.session_state:
-    st.session_state.enhanced = None
-if "filtered" not in st.session_state:
-    st.session_state.filtered = None
-if "morph" not in st.session_state:
-    st.session_state.morph = None
-if "result" not in st.session_state:
-    st.session_state.result = None
+for key in ["image", "processed", "enhanced", "filtered", "morph", "result"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
+# Step 1: Upload Image
 uploaded_file = st.file_uploader("Browse and upload an X-ray image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
     image = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
     st.session_state.image = cv2.resize(image, (256, 256))
-    st.image(st.session_state.image, caption="Original Image", use_column_width=True)
+    st.image(st.session_state.image, caption="Original X-ray Image", use_column_width=True)
 
 # --- STEP 1: Preprocessing ---
-if st.button("Preprocessing (Resize, Median Filter, Histogram Equalization)"):
+if st.button("Run Preprocessing"):
     if st.session_state.image is not None:
         img = st.session_state.image
         blurred = cv2.medianBlur(img, 5)
         equalized = cv2.equalizeHist(blurred)
         st.session_state.processed = equalized
-        st.image(equalized, caption="Preprocessed Image", use_column_width=True)
+        st.image(equalized, caption="Preprocessed Image (After Step 1)", use_column_width=True)
     else:
         st.warning("Please upload an image first.")
 
-# --- STEP 2: Image Enhancement ---
-if st.button("Enhance Image (CLAHE + Unsharp Mask)"):
+# --- STEP 2: Enhancement (CLAHE + Unsharp Mask) ---
+if st.button("Enhance Image"):
     if st.session_state.processed is not None:
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         clahe_img = clahe.apply(st.session_state.processed)
-        gaussian = cv2.GaussianBlur(clahe_img, (3,3), 0)
+        gaussian = cv2.GaussianBlur(clahe_img, (3, 3), 0)
         unsharp = cv2.addWeighted(clahe_img, 1.5, gaussian, -0.5, 0)
         st.session_state.enhanced = unsharp
-        st.image(unsharp, caption="Enhanced Image", use_column_width=True)
+        st.success("Enhancement applied successfully.")
     else:
-        st.warning("Perform preprocessing first.")
+        st.warning("Please run preprocessing before enhancement.")
 
 # --- STEP 3: Filtering ---
-if st.button("Apply Filter (Median + Sharpness Boost)"):
+if st.button("Apply Filtering"):
     if st.session_state.enhanced is not None:
         filtered = cv2.medianBlur(st.session_state.enhanced, 3)
         st.session_state.filtered = filtered
-        st.image(filtered, caption="Filtered Image", use_column_width=True)
+        st.success("Filtering completed successfully.")
     else:
-        st.warning("Enhance image before applying filter.")
+        st.warning("Please enhance the image before filtering.")
 
 # --- STEP 4: Morphological Processing ---
-if st.button("Morphological Segmentation"):
+if st.button("Morphological Processing"):
     if st.session_state.filtered is not None:
-        _, thresh = cv2.threshold(st.session_state.filtered, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        _, binary = cv2.threshold(st.session_state.filtered, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
         st.session_state.morph = morph
-        st.image(morph, caption="Morphological Segmentation Result", use_column_width=True)
+        st.success("Morphological segmentation complete.")
     else:
-        st.warning("Apply filtering first.")
+        st.warning("Please apply filtering before morphological processing.")
 
-# --- STEP 5: Centroid and Area of Stone ---
-if st.button("Calculate Centroid and Area"):
+# --- STEP 5: Detection (Centroid & Area) ---
+if st.button("Detect Kidney Stone (Centroid and Area)"):
     if st.session_state.morph is not None:
         labels = measure.label(st.session_state.morph, connectivity=2)
         props = measure.regionprops(labels)
@@ -85,9 +77,9 @@ if st.button("Calculate Centroid and Area"):
             minr, minc, maxr, maxc = largest.bbox
             cv2.rectangle(output, (minc, minr), (maxc, maxr), (0, 0, 255), 2)
             cv2.circle(output, (int(centroid[1]), int(centroid[0])), 5, (0, 255, 0), -1)
-            st.image(output, caption="Detected Stone", use_column_width=True)
-            st.success(f"Centroid: ({int(centroid[1])}, {int(centroid[0])}) | Area: {int(area)} pixels")
+            st.image(output, caption="Detected Kidney Stone", use_column_width=True)
+            st.success(f"Kidney stone detected. Centroid: ({int(centroid[1])}, {int(centroid[0])}) | Area: {int(area)} pixels")
         else:
-            st.warning("No kidney stone region detected.")
+            st.warning("No kidney stone detected in the image.")
     else:
-        st.warning("Run morphological segmentation first.")
+        st.warning("Please perform morphological processing first.")
