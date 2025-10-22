@@ -3,7 +3,7 @@ from PIL import Image
 import io
 
 st.title("🖼️ Image Compression & Expansion App")
-st.write("Upload an image and set a target size (in KB or MB). The app will compress or enlarge accordingly.")
+st.write("Upload an image and set a target size (in KB or MB).")
 
 uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
@@ -22,13 +22,13 @@ if uploaded_file is not None:
         target_unit = st.selectbox("Select unit", ["KB", "MB"])
 
     if st.button("Process Image"):
-        # Convert MB → KB if needed
+        # Convert MB → KB
         target_size_kb = target_value * 1024 if target_unit == "MB" else target_value
 
         # Initialize buffer
         output_buffer = io.BytesIO()
 
-        # Compression (reduce size)
+        # COMPRESSION
         if target_size_kb < original_size_kb:
             quality = 95
             step = 5
@@ -40,14 +40,14 @@ if uploaded_file is not None:
                     break
                 quality -= step
 
-        # Expansion (increase size)
+        # EXPANSION
         else:
-            # Save at maximum quality first
+            # Save at max quality first
             output_buffer = io.BytesIO()
             image.save(output_buffer, format="JPEG", quality=100)
             size_kb = len(output_buffer.getvalue()) / 1024
 
-            # If still smaller than target, optionally resize slightly to enlarge
+            # If still smaller than target, resize slightly
             if size_kb < target_size_kb:
                 scale_factor = (target_size_kb / size_kb) ** 0.5
                 new_w = max(1, int(image.width * scale_factor))
@@ -65,12 +65,13 @@ if uploaded_file is not None:
         change = ((size_kb - original_size_kb) / original_size_kb) * 100
         direction = "increased" if change > 0 else "reduced"
 
-        # Display result
+        # Display result safely using PIL.Image.open
+        processed_image = Image.open(output_buffer)
         colA, colB = st.columns(2)
         with colA:
             st.image(image, caption=f"Original ({original_size_kb:.2f} KB)", use_container_width=True)
         with colB:
-            st.image(Image.open(output_buffer), caption=f"Processed ({display_size:.2f} {display_unit})", use_container_width=True)
+            st.image(processed_image, caption=f"Processed ({display_size:.2f} {display_unit})", use_container_width=True)
 
         st.success(f"✅ Image {direction} by {abs(change):.2f}%. Final size: {display_size:.2f} {display_unit}")
 
