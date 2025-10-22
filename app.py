@@ -17,7 +17,7 @@ if uploaded_file is not None:
     # Input fields
     col1, col2 = st.columns(2)
     with col1:
-        target_value = st.number_input("Enter target size", min_value=10.0, value=200.0)
+        target_value = st.number_input("Enter target size", min_value=1.0, value=200.0)
     with col2:
         target_unit = st.selectbox("Select unit", ["KB", "MB"])
 
@@ -25,46 +25,43 @@ if uploaded_file is not None:
         # Convert MB → KB if needed
         target_size_kb = target_value * 1024 if target_unit == "MB" else target_value
 
-        # Initialize variables
+        # Initialize buffer
         output_buffer = io.BytesIO()
-        quality = 95
 
-        # Start from high quality and adjust dynamically
-        step = 5
-        current_quality = quality
-
-        # Determine direction (compress or expand)
+        # Compression (reduce size)
         if target_size_kb < original_size_kb:
-            # 🟢 COMPRESSION
-            while current_quality > 5:
+            quality = 95
+            step = 5
+            while quality > 5:
                 output_buffer = io.BytesIO()
-                image.save(output_buffer, format="JPEG", quality=current_quality)
+                image.save(output_buffer, format="JPEG", quality=quality)
                 size_kb = len(output_buffer.getvalue()) / 1024
                 if size_kb <= target_size_kb:
                     break
-                current_quality -= step
-        else:
-            # 🔵 EXPANSION (upsampling or high-quality save)
-            # Re-save at higher DPI or quality to increase size
-            scale_factor = (target_size_kb / original_size_kb) ** 0.5  # approximate scale
-            new_w = int(image.width * scale_factor)
-            new_h = int(image.height * scale_factor)
-            enlarged = image.resize((new_w, new_h), Image.LANCZOS)
+                quality -= step
 
-            # Increase quality if needed
-            current_quality = min(100, 95 + int(scale_factor * 5))
-            enlarged.save(output_buffer, format="JPEG", quality=current_quality)
+        # Expansion (increase size)
+        else:
+            # Save at maximum quality first
+            output_buffer = io.BytesIO()
+            image.save(output_buffer, format="JPEG", quality=100)
             size_kb = len(output_buffer.getvalue()) / 1024
 
-        # Convert KB → MB if needed
-        if target_unit == "MB":
-            display_size = size_kb / 1024
-            display_unit = "MB"
-        else:
-            display_size = size_kb
-            display_unit = "KB"
+            # If still smaller than target, optionally resize slightly to enlarge
+            if size_kb < target_size_kb:
+                scale_factor = (target_size_kb / size_kb) ** 0.5
+                new_w = max(1, int(image.width * scale_factor))
+                new_h = max(1, int(image.height * scale_factor))
+                enlarged = image.resize((new_w, new_h), Image.LANCZOS)
+                output_buffer = io.BytesIO()
+                enlarged.save(output_buffer, format="JPEG", quality=100)
+                size_kb = len(output_buffer.getvalue()) / 1024
 
-        # Calculate percentage change
+        # Convert KB → MB if needed
+        display_size = size_kb / 1024 if target_unit == "MB" else size_kb
+        display_unit = "MB" if target_unit == "MB" else "KB"
+
+        # Percentage change
         change = ((size_kb - original_size_kb) / original_size_kb) * 100
         direction = "increased" if change > 0 else "reduced"
 
@@ -73,7 +70,7 @@ if uploaded_file is not None:
         with colA:
             st.image(image, caption=f"Original ({original_size_kb:.2f} KB)", use_container_width=True)
         with colB:
-            st.image(output_buffer.getvalue(), caption=f"Processed ({display_size:.2f} {display_unit})", use_container_width=True)
+            st.image(Image.open(output_buffer), caption=f"Processed ({display_size:.2f} {display_unit})", use_container_width=True)
 
         st.success(f"✅ Image {direction} by {abs(change):.2f}%. Final size: {display_size:.2f} {display_unit}")
 
