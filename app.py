@@ -1,80 +1,73 @@
 import streamlit as st
 import cv2
+from PIL import Image
 import numpy as np
-from skimage import measure
+import os
+import io
 
-st.set_page_config(page_title="KUB Kidney Stone Detection", layout="wide")
-st.title("Kidney Stone Detection in KUB X-ray")
+st.title("🖼️ Image Compression App")
+st.write("Upload an image and compress it to a target size (in KB or MB).")
 
-# Initialize session_state variables
-for key in ["image", "preprocessed", "enhanced", "morph", "detected"]:
-    if key not in st.session_state:
-        st.session_state[key] = None
+# Upload image
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
 
-uploaded_file = st.file_uploader("Upload your KUB X-ray image", type=["jpg", "jpeg", "png"])
 if uploaded_file is not None:
-    file_bytes = np.frombuffer(uploaded_file.read(), np.uint8)
-    image = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
-    image = cv2.resize(image, (512, 512))
-    st.session_state.image = image
-    st.image(image, caption="Original X-ray", use_column_width=True)
+    # Read image
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Original Image", use_container_width=True)
 
-# Preprocessing: CLAHE + Median Blur
-if st.button("Preprocess Image"):
-    if st.session_state.image is not None:
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(st.session_state.image)
-        filtered = cv2.medianBlur(enhanced, 5)
-        st.session_state.preprocessed = filtered
-        st.image(filtered, caption="Preprocessed Image", use_column_width=True)
-    else:
-        st.warning("Please upload an image first.")
+    # Get target size
+    col1, col2 = st.columns(2)
+    with col1:
+        target_value = st.number_input("Enter target size", min_value=10.0, value=200.0)
+    with col2:
+        target_unit = st.selectbox("Select unit", ["KB", "MB"])
 
-# Enhancement: Unsharp Masking
-if st.button("Enhance Image (Unsharp Mask)"):
-    if st.session_state.preprocessed is not None:
-        gaussian = cv2.GaussianBlur(st.session_state.preprocessed, (5,5), 0)
-        unsharp = cv2.addWeighted(st.session_state.preprocessed, 1.5, gaussian, -0.5, 0)
-        st.session_state.enhanced = unsharp
-        st.success("Image enhancement complete")
-    else:
-        st.warning("Perform preprocessing first.")
-
-# Morphological Segmentation
-if st.button("Segment Stones"):
-    if st.session_state.enhanced is not None:
-        binary = cv2.adaptiveThreshold(
-            st.session_state.enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 21, 5
-        )
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-        st.session_state.morph = morph
-        st.image(morph, caption="Morphological Segmentation", use_column_width=True)
-    else:
-        st.warning("Enhance image before segmentation.")
-
-# Detect stones by size and shape filtering
-if st.button("Detect Kidney Stones"):
-    if st.session_state.morph is not None and st.session_state.image is not None:
-        labels = measure.label(st.session_state.morph, connectivity=2)
-        props = measure.regionprops(labels)
-
-        output = cv2.cvtColor(st.session_state.image, cv2.COLOR_GRAY2BGR)
-        stone_found = False
-        for region in props:
-            if 50 < region.area < 1500:
-                circularity = 4 * np.pi * region.area / (region.perimeter ** 2 + 1e-5)
-                if circularity > 0.5:
-                    y, x = region.centroid
-                    minr, minc, maxr, maxc = region.bbox
-                    cv2.rectangle(output, (minc, minr), (maxc, maxr), (0,0,255), 2)
-                    cv2.circle(output, (int(x), int(y)), 4, (0,255,0), -1)
-                    stone_found = True
-        if stone_found:
-            st.session_state.detected = output
-            st.image(output, caption="Detected Kidney Stones", use_column_width=True)
+    if st.button("Compress Image"):
+        # Convert MB → KB if needed
+        if target_unit == "MB":
+            target_size_kb = target_value * 1024
         else:
-            st.warning("No kidney stones detected.")
-    else:
-        st.warning("Perform segmentation first.")
+            target_size_kb = target_value
+
+        # Convert image to OpenCV format
+        img_array = np.array(image)
+        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+
+        # Save temporarily
+        temp_path = "temp_input.jpg"
+        cv2.imwrite(temp_path, img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+        # Open using PIL for compression
+        img = Image.open(temp_path)
+        output_path = "compressed_output.jpg"
+        quality = 95
+        target_size = target_size_kb * 1024  # KB → Bytes
+
+        while True:
+            img.save(output_path, "JPEG", quality=quality)
+            size = os.path.getsize(output_path)
+            if size <= target_size or quality <= 10:
+                break
+            quality -= 5
+
+        compressed_img = Image.open(output_path)
+        compressed_size_kb = size / 1024
+
+        # Display results
+        colA, colB = st.columns(2)
+        with colA:
+            st.image(image, caption=f"Original ({uploaded_file.size/1024:.2f} KB)", use_container_width=True)
+        with colB:
+            st.image(compressed_img, caption=f"Compressed ({compressed_size_kb:.2f} KB)", use_container_width=True)
+
+        # Provide download option
+        with open(output_path, "rb") as f:
+            btn = st.download_button(
+                label="📥 Download Compressed Image",
+                data=f,
+                file_name="compressed.jpg",
+                mime="image/jpeg"
+            )
+
+        os.remove(temp_path)
