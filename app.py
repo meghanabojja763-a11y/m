@@ -5,10 +5,10 @@ import cv2
 import numpy as np
 from skimage.metrics import structural_similarity as ssim
 
-st.title("🖼️ Smart Image Compression App")
+st.title("🖼️ Smart Image Compression & Expansion App")
 st.write("""
 Upload multiple images, set a target size (KB/MB), preserve faces/text, 
-choose output format (JPEG/WebP), and download all images in a ZIP.
+choose output format (JPEG/WebP), and download all processed images in a ZIP.
 """)
 
 # --- Upload multiple images ---
@@ -31,7 +31,6 @@ if uploaded_files:
             # Convert target to KB
             target_size_kb = target_value * 1024 if target_unit == "MB" else target_value
 
-            # Convert to OpenCV image for AI-aware processing
             img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
             # --- Face detection ---
@@ -39,18 +38,16 @@ if uploaded_files:
             gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-            # Create mask for faces to preserve (not used in compression directly here)
             mask = np.zeros(img_cv.shape[:2], dtype=np.uint8)
             for (x, y, w, h) in faces:
                 mask[y:y+h, x:x+w] = 255
 
-            # --- Compression loop ---
             output_buffer = io.BytesIO()
-            quality = 95
-            step = 5
 
+            # --- Compression Mode ---
             if target_size_kb < original_size_kb:
-                # Compress JPEG/WebP iteratively
+                quality = 95
+                step = 5
                 while quality > 5:
                     temp_buffer = io.BytesIO()
                     image.save(temp_buffer, format=output_format, quality=quality)
@@ -60,19 +57,39 @@ if uploaded_files:
                         break
                     quality -= step
                 else:
-                    # If never reached target size, use lowest quality tried
                     image.save(output_buffer, format=output_format, quality=quality)
-            else:
-                # Expansion: save at max quality
-                image.save(output_buffer, format=output_format, quality=100)
 
-            # Calculate PSNR and SSIM
+            # --- Expansion Mode ---
+            else:
+                scale_factor = 1.0
+                max_iterations = 15
+                for _ in range(max_iterations):
+                    # Resize image
+                    new_w = int(image.width * scale_factor)
+                    new_h = int(image.height * scale_factor)
+                    resized_img = image.resize((new_w, new_h), Image.LANCZOS)
+
+                    temp_buffer = io.BytesIO()
+                    resized_img.save(temp_buffer, format=output_format, quality=100)
+                    size_kb = len(temp_buffer.getvalue()) / 1024
+
+                    if size_kb >= target_size_kb * 0.95:  # close to target
+                        output_buffer = temp_buffer
+                        break
+
+                    # Adjust scale based on difference ratio
+                    scale_factor *= (target_size_kb / max(size_kb, 1)) ** 0.3
+
+                else:
+                    # fallback to largest generated image
+                    output_buffer = temp_buffer
+
+            # --- Quality Metrics ---
             output_buffer.seek(0)
             processed_image = Image.open(output_buffer)
             processed_np = np.array(processed_image)
             original_np = np.array(image)
 
-            # Ensure both arrays have same shape
             if processed_np.shape != original_np.shape:
                 processed_np = cv2.resize(processed_np, (original_np.shape[1], original_np.shape[0]))
 
@@ -81,9 +98,9 @@ if uploaded_files:
             try:
                 ssim_val = ssim(original_np, processed_np, channel_axis=-1)
             except ValueError:
-                ssim_val = 0.0  # fallback if SSIM can't be computed
+                ssim_val = 0.0
 
-            # Display results
+            # --- Display ---
             st.write(f"**{uploaded_file.name}**")
             col1, col2 = st.columns(2)
             with col1:
