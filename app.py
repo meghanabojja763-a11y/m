@@ -30,28 +30,30 @@ if uploaded_file is not None:
         # Compression
         if target_size_kb < original_size_kb:
             quality = 95
-            step = 5
             while quality > 5:
                 output_buffer = io.BytesIO()
                 image.save(output_buffer, format="JPEG", quality=quality)
                 size_kb = len(output_buffer.getvalue()) / 1024
                 if size_kb <= target_size_kb:
                     break
-                quality -= step
+                quality -= 5
 
-        # Expansion (maximize quality)
+        # Expansion
         else:
+            # Save as PNG for expansion (lossless)
             output_buffer = io.BytesIO()
-            image.save(output_buffer, format="JPEG", quality=100)
+            image.save(output_buffer, format="PNG")
             size_kb = len(output_buffer.getvalue()) / 1024
+
+            # If still smaller than target, resize proportionally
             if size_kb < target_size_kb:
-                # Optional: slight resize, but avoid very large scale
-                scale_factor = min(2.0, (target_size_kb / size_kb) ** 0.5)
+                scale_factor = (target_size_kb / size_kb) ** 0.5
                 new_w = max(1, int(image.width * scale_factor))
                 new_h = max(1, int(image.height * scale_factor))
                 enlarged = image.resize((new_w, new_h), Image.LANCZOS)
+
                 output_buffer = io.BytesIO()
-                enlarged.save(output_buffer, format="JPEG", quality=100)
+                enlarged.save(output_buffer, format="PNG")
                 size_kb = len(output_buffer.getvalue()) / 1024
 
         # Display size in selected unit
@@ -63,7 +65,7 @@ if uploaded_file is not None:
         direction = "increased" if change > 0 else "reduced"
 
         # Display images
-        output_buffer.seek(0)  # reset buffer pointer
+        output_buffer.seek(0)
         processed_image = Image.open(output_buffer)
         colA, colB = st.columns(2)
         with colA:
@@ -78,6 +80,6 @@ if uploaded_file is not None:
         st.download_button(
             label="📥 Download Processed Image",
             data=output_buffer.getvalue(),
-            file_name="processed_image.jpg",
-            mime="image/jpeg"
+            file_name="processed_image.png" if target_size_kb > original_size_kb else "processed_image.jpg",
+            mime="image/png" if target_size_kb > original_size_kb else "image/jpeg"
         )
