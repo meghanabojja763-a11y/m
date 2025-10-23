@@ -1,7 +1,4 @@
-streamlit
+pytesseract
 opencv-python-headless
-scikit-image
-numpy
-pandas
-matplotlib
-scipy
+pillow
+streamlit
