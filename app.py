@@ -7,16 +7,17 @@ import zipfile
 from skimage.metrics import structural_similarity as ssim
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# For local folder browsing
+import tkinter as tk
+from tkinter import filedialog
 
 # -----------------------------
 # 🧠 Image Preprocessing
 # -----------------------------
 def preprocess_image(image_path, size=(128, 128)):
-    """Read and preprocess image: enhance, resize, and apply morphology."""
     img = cv2.imread(image_path)
     if img is None:
         raise ValueError(f"Image not found: {image_path}")
-    
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     enhanced = cv2.equalizeHist(gray)
     denoised = cv2.GaussianBlur(enhanced, (3, 3), 0)
@@ -25,21 +26,17 @@ def preprocess_image(image_path, size=(128, 128)):
     morph = cv2.morphologyEx(resized, cv2.MORPH_CLOSE, kernel)
     return morph
 
-
 # -----------------------------
 # ⚡ Comparison Functions
 # -----------------------------
 def quick_compare(img1, img2):
-    """Fast comparison using SSIM and histogram."""
     ssim_score, _ = ssim(img1, img2, full=False)
     hist1 = cv2.calcHist([img1], [0], None, [64], [0, 256])
     hist2 = cv2.calcHist([img2], [0], None, [64], [0, 256])
     hist_score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
     return 0.7 * ssim_score + 0.3 * hist_score
 
-
 def detailed_compare(img1, img2):
-    """More accurate but slower comparison including ORB features."""
     ssim_score, _ = ssim(img1, img2, full=True)
     hist1 = cv2.calcHist([img1], [0], None, [64], [0, 256])
     hist2 = cv2.calcHist([img2], [0], None, [64], [0, 256])
@@ -56,16 +53,13 @@ def detailed_compare(img1, img2):
         match_score = 0
     return 0.5 * ssim_score + 0.3 * hist_score + 0.2 * match_score
 
-
 # -----------------------------
 # 🗂️ Dataset Loader
 # -----------------------------
 @st.cache_data
 def load_dataset(dataset_source, is_zip):
-    """Load dataset either from ZIP or from a local folder."""
     temp_dir = tempfile.mkdtemp()
 
-    # --- Case 1: ZIP upload ---
     if is_zip:
         zip_path = os.path.join(temp_dir, "dataset.zip")
         with open(zip_path, "wb") as f:
@@ -73,7 +67,6 @@ def load_dataset(dataset_source, is_zip):
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir)
         base_dir = temp_dir
-    # --- Case 2: Local folder ---
     else:
         base_dir = dataset_source
 
@@ -88,14 +81,11 @@ def load_dataset(dataset_source, is_zip):
                     print(f"Skipping {filename}: {e}")
     return dataset_images
 
-
 # -----------------------------
 # 🔍 Search Function
 # -----------------------------
 def search_image_in_dataset(dataset_images, search_image_path, threshold=0.85):
-    """Search dataset for similar image."""
     search_img = preprocess_image(search_image_path)
-
     st.write(f"Found {len(dataset_images)} images in dataset.")
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -136,16 +126,13 @@ def search_image_in_dataset(dataset_images, search_image_path, threshold=0.85):
     else:
         return None
 
-
 # -----------------------------
 # 🚀 Streamlit UI
 # -----------------------------
 st.title("🔍 Universal Image Similarity Search App")
 st.write("Upload a dataset (ZIP or folder) and an image to find similar matches.")
 
-# Mode selection
-mode = st.radio("Select dataset input method:", ("Upload ZIP file", "Use Local Folder"))
-
+mode = st.radio("Select dataset input method:", ("Upload ZIP file", "Browse Local Folder"))
 dataset_images = None
 
 # --- Option 1: Upload ZIP file ---
@@ -156,19 +143,26 @@ if mode == "Upload ZIP file":
             dataset_images = load_dataset(dataset_zip, is_zip=True)
         st.success(f"Loaded {len(dataset_images)} images from uploaded ZIP.")
 
-# --- Option 2: Use Local Folder ---
-elif mode == "Use Local Folder":
-    dataset_folder = st.text_input("📁 Enter path to local dataset folder:")
-    if dataset_folder and os.path.isdir(dataset_folder):
+# --- Option 2: Browse Local Folder ---
+elif mode == "Browse Local Folder":
+    if st.button("📁 Browse Folder"):
+        root = tk.Tk()
+        root.withdraw()  # Hide Tkinter main window
+        folder_path = filedialog.askdirectory(title="Select Dataset Folder")
+        root.destroy()
+        if folder_path:
+            st.session_state["selected_folder"] = folder_path
+            st.success(f"Selected Folder: {folder_path}")
+    if "selected_folder" in st.session_state:
+        folder = st.session_state["selected_folder"]
         with st.spinner("Loading dataset from local folder..."):
-            dataset_images = load_dataset(dataset_folder, is_zip=False)
+            dataset_images = load_dataset(folder, is_zip=False)
         st.success(f"Loaded {len(dataset_images)} images from local folder.")
 
 # --- Upload search image ---
 search_image_file = st.file_uploader("🖼️ Upload Search Image", type=["jpg", "jpeg", "png"])
 
 if dataset_images and search_image_file:
-    # Save search image temporarily
     temp_search_path = os.path.join(tempfile.gettempdir(), "temp_search.jpg")
     with open(temp_search_path, "wb") as f:
         f.write(search_image_file.getbuffer())
@@ -178,7 +172,6 @@ if dataset_images and search_image_file:
     if st.button("Search for Similar Image"):
         with st.spinner("Searching for similar images..."):
             result = search_image_in_dataset(dataset_images, temp_search_path)
-        
         st.write("## 🔎 Search Results")
         if result:
             st.success(f"✅ Match Found: {result['filename']} (Score: {result['similarity_score']:.4f})")
