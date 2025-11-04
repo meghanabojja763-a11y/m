@@ -36,8 +36,7 @@ def compare_images(img1, img2):
 # ----------------------------- #
 # 🗂️ LOAD DATASET (ZIP)
 # ----------------------------- #
-@st.cache_data(show_spinner=False)
-def load_dataset_from_zip(zip_bytes):
+def load_dataset_from_zip(zip_bytes: bytes):
     """Extract ZIP and preprocess all images."""
     temp_dir = tempfile.mkdtemp()
     zip_path = os.path.join(temp_dir, "dataset.zip")
@@ -113,8 +112,9 @@ search_image_file = st.file_uploader("🖼️ Upload Search Image", type=["jpg",
 if dataset_zip and search_image_file:
     if st.button("Search"):
         with st.spinner("Processing dataset..."):
-            # Read ZIP as bytes
-            dataset_images = load_dataset_from_zip(dataset_zip.getbuffer())
+            # Convert to bytes (important fix for UnhashableParamError)
+            zip_bytes = dataset_zip.read()
+            dataset_images = load_dataset_from_zip(zip_bytes)
             st.success(f"✅ Loaded {len(dataset_images)} images from ZIP.")
 
         # Save and preprocess search image
