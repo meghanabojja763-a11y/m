@@ -5,6 +5,7 @@ import os
 import tempfile
 import zipfile
 from PIL import Image
+from io import BytesIO
 from skimage.metrics import structural_similarity as ssim
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -36,20 +37,20 @@ def compare_images(img1, img2):
 # 🗂️ LOAD DATASET (ZIP)
 # ----------------------------- #
 @st.cache_data(show_spinner=False)
-def load_dataset_from_zip(zip_file):
+def load_dataset_from_zip(zip_bytes):
     """Extract ZIP and preprocess all images."""
     temp_dir = tempfile.mkdtemp()
     zip_path = os.path.join(temp_dir, "dataset.zip")
 
-    # Save the uploaded ZIP temporarily
+    # Save ZIP temporarily
     with open(zip_path, "wb") as f:
-        f.write(zip_file.getbuffer())
+        f.write(zip_bytes)
 
-    # Extract ZIP contents
+    # Extract ZIP
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
         zip_ref.extractall(temp_dir)
 
-    # Load and preprocess all images
+    # Process dataset
     dataset_images = []
     for root, _, files in os.walk(temp_dir):
         for file in files:
@@ -112,15 +113,17 @@ search_image_file = st.file_uploader("🖼️ Upload Search Image", type=["jpg",
 if dataset_zip and search_image_file:
     if st.button("Search"):
         with st.spinner("Processing dataset..."):
-            dataset_images = load_dataset_from_zip(dataset_zip)
+            # Read ZIP as bytes
+            dataset_images = load_dataset_from_zip(dataset_zip.getbuffer())
             st.success(f"✅ Loaded {len(dataset_images)} images from ZIP.")
 
-        # Save search image temporarily
-        temp_search_path = os.path.join(tempfile.gettempdir(), "search_image.jpg")
-        with open(temp_search_path, "wb") as f:
-            f.write(search_image_file.getbuffer())
+        # Save and preprocess search image
+        search_bytes = search_image_file.getvalue()
+        search_image_path = os.path.join(tempfile.gettempdir(), "search_image.jpg")
+        with open(search_image_path, "wb") as f:
+            f.write(search_bytes)
 
-        search_img = preprocess_image(temp_search_path)
+        search_img = preprocess_image(search_image_path)
 
         with st.spinner("Searching for similar images..."):
             result = search_image(dataset_images, search_img)
@@ -132,8 +135,7 @@ if dataset_zip and search_image_file:
 
             col1, col2 = st.columns(2)
             with col1:
-                # Convert to displayable image
-                st.image(Image.open(search_image_file), caption="Search Image", use_container_width=True)
+                st.image(Image.open(BytesIO(search_bytes)), caption="Search Image", use_container_width=True)
             with col2:
                 st.image(Image.open(best_path), caption=f"Matched Image: {best_name}", use_container_width=True)
         else:
