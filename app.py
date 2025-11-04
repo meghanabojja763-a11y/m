@@ -2,9 +2,11 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
+import tempfile
+import zipfile
 from skimage.metrics import structural_similarity as ssim
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
+
 
 # -----------------------------
 # 🧠 Image Preprocessing
@@ -56,74 +58,81 @@ def detailed_compare(img1, img2):
 
 
 # -----------------------------
-# 🗂️ Cached Dataset Loading
+# 🗂️ Dataset Loader
 # -----------------------------
 @st.cache_data
-def load_dataset_images(dataset_folder):
-    """Cache and preprocess all dataset images."""
+def load_dataset(dataset_source, is_zip):
+    """Load dataset either from ZIP or from a local folder."""
+    temp_dir = tempfile.mkdtemp()
+
+    # --- Case 1: ZIP upload ---
+    if is_zip:
+        zip_path = os.path.join(temp_dir, "dataset.zip")
+        with open(zip_path, "wb") as f:
+            f.write(dataset_source.getbuffer())
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
+        base_dir = temp_dir
+    # --- Case 2: Local folder ---
+    else:
+        base_dir = dataset_source
+
     dataset_images = []
-    for filename in os.listdir(dataset_folder):
-        if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-            img_path = os.path.join(dataset_folder, filename)
-            try:
-                dataset_images.append((filename, preprocess_image(img_path)))
-            except Exception as e:
-                print(f"Skipping {filename}: {e}")
+    for root, _, files in os.walk(base_dir):
+        for filename in files:
+            if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                img_path = os.path.join(root, filename)
+                try:
+                    dataset_images.append((filename, preprocess_image(img_path), img_path))
+                except Exception as e:
+                    print(f"Skipping {filename}: {e}")
     return dataset_images
 
 
 # -----------------------------
 # 🔍 Search Function
 # -----------------------------
-def search_image_in_dataset(dataset_folder, search_image_path, threshold=0.85):
+def search_image_in_dataset(dataset_images, search_image_path, threshold=0.85):
     """Search dataset for similar image."""
     search_img = preprocess_image(search_image_path)
-    dataset_images = load_dataset_images(dataset_folder)
 
     st.write(f"Found {len(dataset_images)} images in dataset.")
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    # Step 1: Quick parallel comparison
     quick_scores = []
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(quick_compare, search_img, img): fname for fname, img in dataset_images}
+        futures = {executor.submit(quick_compare, search_img, img): (fname, path)
+                   for fname, img, path in dataset_images}
         for i, future in enumerate(as_completed(futures)):
-            filename = futures[future]
+            filename, path = futures[future]
             try:
                 score = future.result()
-                quick_scores.append((filename, score))
+                quick_scores.append((filename, path, score))
             except Exception as e:
                 print(f"Error on {filename}: {e}")
             progress_bar.progress((i + 1) / len(dataset_images))
-            status_text.text(f"Quick comparing {filename} ({i+1}/{len(dataset_images)})")
+            status_text.text(f"Comparing {filename} ({i+1}/{len(dataset_images)})")
 
-    # Step 2: Pick top 5 for detailed comparison
-    quick_scores.sort(key=lambda x: x[1], reverse=True)
+    quick_scores.sort(key=lambda x: x[2], reverse=True)
     top_candidates = quick_scores[:min(5, len(quick_scores))]
 
     st.write("### Top Quick Matches:")
-    for f, s in top_candidates:
+    for f, _, s in top_candidates:
         st.write(f"**{f}** → Score: `{s:.4f}`")
 
-    # Step 3: Detailed check
     best_match = None
     best_score = 0
-    for filename, _ in top_candidates:
-        dataset_img = [img for f, img in dataset_images if f == filename][0]
+    for filename, path, _ in top_candidates:
+        dataset_img = [img for f, img, p in dataset_images if f == filename][0]
         score = detailed_compare(search_img, dataset_img)
         st.write(f"Detailed score for **{filename}**: {score:.4f}")
         if score > best_score:
             best_score = score
-            best_match = filename
+            best_match = (filename, path)
 
-    # Step 4: Return results
     if best_score >= threshold:
-        return {
-            "filename": best_match,
-            "path": os.path.join(dataset_folder, best_match),
-            "similarity_score": best_score
-        }
+        return {"filename": best_match[0], "path": best_match[1], "similarity_score": best_score}
     else:
         return None
 
@@ -131,22 +140,44 @@ def search_image_in_dataset(dataset_folder, search_image_path, threshold=0.85):
 # -----------------------------
 # 🚀 Streamlit UI
 # -----------------------------
-st.title("🔍 Image Similarity Search App")
-st.write("Upload an image and compare it with a dataset in real time.")
+st.title("🔍 Universal Image Similarity Search App")
+st.write("Upload a dataset (ZIP or folder) and an image to find similar matches.")
 
-dataset_folder = st.text_input("Enter the path to your dataset folder:")
-search_image_file = st.file_uploader("Upload a search image", type=["jpg", "jpeg", "png"])
+# Mode selection
+mode = st.radio("Select dataset input method:", ("Upload ZIP file", "Use Local Folder"))
 
-if dataset_folder and search_image_file:
-    temp_path = os.path.join("temp_search.jpg")
-    with open(temp_path, "wb") as f:
+dataset_images = None
+
+# --- Option 1: Upload ZIP file ---
+if mode == "Upload ZIP file":
+    dataset_zip = st.file_uploader("📦 Upload Dataset (ZIP)", type=["zip"])
+    if dataset_zip:
+        with st.spinner("Extracting and preprocessing dataset..."):
+            dataset_images = load_dataset(dataset_zip, is_zip=True)
+        st.success(f"Loaded {len(dataset_images)} images from uploaded ZIP.")
+
+# --- Option 2: Use Local Folder ---
+elif mode == "Use Local Folder":
+    dataset_folder = st.text_input("📁 Enter path to local dataset folder:")
+    if dataset_folder and os.path.isdir(dataset_folder):
+        with st.spinner("Loading dataset from local folder..."):
+            dataset_images = load_dataset(dataset_folder, is_zip=False)
+        st.success(f"Loaded {len(dataset_images)} images from local folder.")
+
+# --- Upload search image ---
+search_image_file = st.file_uploader("🖼️ Upload Search Image", type=["jpg", "jpeg", "png"])
+
+if dataset_images and search_image_file:
+    # Save search image temporarily
+    temp_search_path = os.path.join(tempfile.gettempdir(), "temp_search.jpg")
+    with open(temp_search_path, "wb") as f:
         f.write(search_image_file.getbuffer())
 
-    st.image(temp_path, caption="Search Image", width=200)
+    st.image(temp_search_path, caption="Search Image", width=200)
 
     if st.button("Search for Similar Image"):
         with st.spinner("Searching for similar images..."):
-            result = search_image_in_dataset(dataset_folder, temp_path)
+            result = search_image_in_dataset(dataset_images, temp_search_path)
         
         st.write("## 🔎 Search Results")
         if result:
@@ -154,3 +185,5 @@ if dataset_folder and search_image_file:
             st.image(result["path"], caption=f"Matched Image: {result['filename']}")
         else:
             st.error("❌ No similar image found in dataset.")
+else:
+    st.info("Please upload or select a dataset and upload a search image.")
