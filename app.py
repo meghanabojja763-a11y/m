@@ -1,9 +1,14 @@
+import streamlit as st
 import cv2
 import numpy as np
 import os
 from skimage.metrics import structural_similarity as ssim
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 
+# -----------------------------
+# 🧠 Image Preprocessing
+# -----------------------------
 def preprocess_image(image_path, size=(128, 128)):
     """Read and preprocess image: enhance, resize, and apply morphology."""
     img = cv2.imread(image_path)
@@ -19,8 +24,11 @@ def preprocess_image(image_path, size=(128, 128)):
     return morph
 
 
+# -----------------------------
+# ⚡ Comparison Functions
+# -----------------------------
 def quick_compare(img1, img2):
-    """Fast comparison using SSIM and histogram only."""
+    """Fast comparison using SSIM and histogram."""
     ssim_score, _ = ssim(img1, img2, full=False)
     hist1 = cv2.calcHist([img1], [0], None, [64], [0, 256])
     hist2 = cv2.calcHist([img2], [0], None, [64], [0, 256])
@@ -47,68 +55,102 @@ def detailed_compare(img1, img2):
     return 0.5 * ssim_score + 0.3 * hist_score + 0.2 * match_score
 
 
-def search_image_in_dataset(dataset_folder, search_image_path, threshold=0.85):
-    """Search dataset for image similar to search image, optimized version."""
-    print(f"\n🔍 Searching for image similar to: {os.path.basename(search_image_path)}")
-    search_img = preprocess_image(search_image_path)
-
-    # --- Step 1: Cache preprocessed dataset images ---
+# -----------------------------
+# 🗂️ Cached Dataset Loading
+# -----------------------------
+@st.cache_data
+def load_dataset_images(dataset_folder):
+    """Cache and preprocess all dataset images."""
     dataset_images = []
     for filename in os.listdir(dataset_folder):
         if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-            dataset_images.append((filename, preprocess_image(os.path.join(dataset_folder, filename))))
+            img_path = os.path.join(dataset_folder, filename)
+            try:
+                dataset_images.append((filename, preprocess_image(img_path)))
+            except Exception as e:
+                print(f"Skipping {filename}: {e}")
+    return dataset_images
 
-    # --- Step 2: Quick parallel comparison ---
+
+# -----------------------------
+# 🔍 Search Function
+# -----------------------------
+def search_image_in_dataset(dataset_folder, search_image_path, threshold=0.85):
+    """Search dataset for similar image."""
+    search_img = preprocess_image(search_image_path)
+    dataset_images = load_dataset_images(dataset_folder)
+
+    st.write(f"Found {len(dataset_images)} images in dataset.")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    # Step 1: Quick parallel comparison
     quick_scores = []
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(quick_compare, search_img, img): fname for fname, img in dataset_images}
-        for future in as_completed(futures):
+        for i, future in enumerate(as_completed(futures)):
             filename = futures[future]
             try:
                 score = future.result()
                 quick_scores.append((filename, score))
             except Exception as e:
                 print(f"Error on {filename}: {e}")
+            progress_bar.progress((i + 1) / len(dataset_images))
+            status_text.text(f"Quick comparing {filename} ({i+1}/{len(dataset_images)})")
 
-    # --- Step 3: Select top candidates for detailed comparison ---
+    # Step 2: Pick top 5 for detailed comparison
     quick_scores.sort(key=lambda x: x[1], reverse=True)
     top_candidates = quick_scores[:min(5, len(quick_scores))]
 
-    print("\nTop quick matches (before ORB):")
+    st.write("### Top Quick Matches:")
     for f, s in top_candidates:
-        print(f"{f:30} -> Score: {s:.4f}")
+        st.write(f"**{f}** → Score: `{s:.4f}`")
 
-    # --- Step 4: Detailed check for top matches ---
+    # Step 3: Detailed check
     best_match = None
     best_score = 0
     for filename, _ in top_candidates:
         dataset_img = [img for f, img in dataset_images if f == filename][0]
         score = detailed_compare(search_img, dataset_img)
-        print(f"Detailed score for {filename}: {score:.4f}")
+        st.write(f"Detailed score for **{filename}**: {score:.4f}")
         if score > best_score:
             best_score = score
             best_match = filename
 
-    # --- Step 5: Decision ---
-    print("\n=== Search Results ===")
+    # Step 4: Return results
     if best_score >= threshold:
-        print(f"✅ Match Found: {best_match} (Score: {best_score:.4f})")
         return {
             "filename": best_match,
             "path": os.path.join(dataset_folder, best_match),
             "similarity_score": best_score
         }
     else:
-        print("❌ No similar image found in dataset.")
         return None
 
 
-if __name__ == "__main__":
-    dataset_folder = input("Enter dataset folder path: ").strip()
-    search_image_path = input("Enter search image path: ").strip()
+# -----------------------------
+# 🚀 Streamlit UI
+# -----------------------------
+st.title("🔍 Image Similarity Search App")
+st.write("Upload an image and compare it with a dataset in real time.")
 
-    result = search_image_in_dataset(dataset_folder, search_image_path)
-    if result:
-        print("\nImage Information:")
-        for k, v in result.items():
-            print(f"{k}: {v}")
+dataset_folder = st.text_input("Enter the path to your dataset folder:")
+search_image_file = st.file_uploader("Upload a search image", type=["jpg", "jpeg", "png"])
+
+if dataset_folder and search_image_file:
+    temp_path = os.path.join("temp_search.jpg")
+    with open(temp_path, "wb") as f:
+        f.write(search_image_file.getbuffer())
+
+    st.image(temp_path, caption="Search Image", width=200)
+
+    if st.button("Search for Similar Image"):
+        with st.spinner("Searching for similar images..."):
+            result = search_image_in_dataset(dataset_folder, temp_path)
+        
+        st.write("## 🔎 Search Results")
+        if result:
+            st.success(f"✅ Match Found: {result['filename']} (Score: {result['similarity_score']:.4f})")
+            st.image(result["path"], caption=f"Matched Image: {result['filename']}")
+        else:
+            st.error("❌ No similar image found in dataset.")
