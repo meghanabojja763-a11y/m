@@ -2,181 +2,98 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
-import tempfile
-import zipfile
+from tempfile import TemporaryDirectory
 from skimage.metrics import structural_similarity as ssim
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
-# For local folder browsing
-import tkinter as tk
-from tkinter import filedialog
-
-# -----------------------------
-# 🧠 Image Preprocessing
-# -----------------------------
-def preprocess_image(image_path, size=(128, 128)):
-    img = cv2.imread(image_path)
+# ---------- IMAGE PROCESSING ----------
+def preprocess_image(image_bytes):
+    """Read and preprocess image from bytes."""
+    file_bytes = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     if img is None:
-        raise ValueError(f"Image not found: {image_path}")
+        raise ValueError("Invalid image file")
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     enhanced = cv2.equalizeHist(gray)
-    denoised = cv2.GaussianBlur(enhanced, (3, 3), 0)
-    resized = cv2.resize(denoised, size, interpolation=cv2.INTER_AREA)
-    kernel = np.ones((3, 3), np.uint8)
-    morph = cv2.morphologyEx(resized, cv2.MORPH_CLOSE, kernel)
-    return morph
+    return enhanced
 
-# -----------------------------
-# ⚡ Comparison Functions
-# -----------------------------
 def quick_compare(img1, img2):
-    ssim_score, _ = ssim(img1, img2, full=False)
-    hist1 = cv2.calcHist([img1], [0], None, [64], [0, 256])
-    hist2 = cv2.calcHist([img2], [0], None, [64], [0, 256])
-    hist_score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-    return 0.7 * ssim_score + 0.3 * hist_score
+    """Fast SSIM similarity score."""
+    h, w = min(img1.shape[0], img2.shape[0]), min(img1.shape[1], img2.shape[1])
+    img1_resized = cv2.resize(img1, (w, h))
+    img2_resized = cv2.resize(img2, (w, h))
+    score, _ = ssim(img1_resized, img2_resized, full=True)
+    return score
 
-def detailed_compare(img1, img2):
-    ssim_score, _ = ssim(img1, img2, full=True)
-    hist1 = cv2.calcHist([img1], [0], None, [64], [0, 256])
-    hist2 = cv2.calcHist([img2], [0], None, [64], [0, 256])
-    hist_score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+# ---------- MAIN SEARCH FUNCTION ----------
+def search_image_in_dataset(dataset_images, search_image):
+    results = []
 
-    orb = cv2.ORB_create()
-    kp1, des1 = orb.detectAndCompute(img1, None)
-    kp2, des2 = orb.detectAndCompute(img2, None)
-    if des1 is not None and des2 is not None and len(kp1) > 0 and len(kp2) > 0:
-        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        matches = bf.match(des1, des2)
-        match_score = len(matches) / max(len(kp1), len(kp2))
-    else:
-        match_score = 0
-    return 0.5 * ssim_score + 0.3 * hist_score + 0.2 * match_score
-
-# -----------------------------
-# 🗂️ Dataset Loader
-# -----------------------------
-@st.cache_data
-def load_dataset(dataset_source, is_zip):
-    temp_dir = tempfile.mkdtemp()
-
-    if is_zip:
-        zip_path = os.path.join(temp_dir, "dataset.zip")
-        with open(zip_path, "wb") as f:
-            f.write(dataset_source.getbuffer())
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(temp_dir)
-        base_dir = temp_dir
-    else:
-        base_dir = dataset_source
-
-    dataset_images = []
-    for root, _, files in os.walk(base_dir):
-        for filename in files:
-            if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-                img_path = os.path.join(root, filename)
-                try:
-                    dataset_images.append((filename, preprocess_image(img_path), img_path))
-                except Exception as e:
-                    print(f"Skipping {filename}: {e}")
-    return dataset_images
-
-# -----------------------------
-# 🔍 Search Function
-# -----------------------------
-def search_image_in_dataset(dataset_images, search_image_path, threshold=0.85):
-    search_img = preprocess_image(search_image_path)
-    st.write(f"Found {len(dataset_images)} images in dataset.")
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    quick_scores = []
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(quick_compare, search_img, img): (fname, path)
-                   for fname, img, path in dataset_images}
-        for i, future in enumerate(as_completed(futures)):
-            filename, path = futures[future]
-            try:
-                score = future.result()
-                quick_scores.append((filename, path, score))
-            except Exception as e:
-                print(f"Error on {filename}: {e}")
+        futures = []
+        for idx, (name, img) in enumerate(dataset_images):
+            futures.append(executor.submit(quick_compare, img, search_image))
+
+        for i, f in enumerate(futures):
+            score = f.result()
+            results.append((dataset_images[i][0], score))
             progress_bar.progress((i + 1) / len(dataset_images))
-            status_text.text(f"Comparing {filename} ({i+1}/{len(dataset_images)})")
+            status_text.text(f"Compared {i+1}/{len(dataset_images)} images...")
 
-    quick_scores.sort(key=lambda x: x[2], reverse=True)
-    top_candidates = quick_scores[:min(5, len(quick_scores))]
+    progress_bar.empty()
+    status_text.empty()
 
-    st.write("### Top Quick Matches:")
-    for f, _, s in top_candidates:
-        st.write(f"**{f}** → Score: `{s:.4f}`")
+    best_match = max(results, key=lambda x: x[1]) if results else None
+    return best_match
 
-    best_match = None
-    best_score = 0
-    for filename, path, _ in top_candidates:
-        dataset_img = [img for f, img, p in dataset_images if f == filename][0]
-        score = detailed_compare(search_img, dataset_img)
-        st.write(f"Detailed score for **{filename}**: {score:.4f}")
-        if score > best_score:
-            best_score = score
-            best_match = (filename, path)
+# ---------- STREAMLIT APP ----------
+st.title("🔍 Image Similarity Search App")
 
-    if best_score >= threshold:
-        return {"filename": best_match[0], "path": best_match[1], "similarity_score": best_score}
-    else:
-        return None
+st.write("""
+Upload a **dataset of images** and a **search image** to find the most similar match.
+You can upload **any number of images**, not just a zip file.
+""")
 
-# -----------------------------
-# 🚀 Streamlit UI
-# -----------------------------
-st.title("🔍 Universal Image Similarity Search App")
-st.write("Upload a dataset (ZIP or folder) and an image to find similar matches.")
+dataset_files = st.file_uploader(
+    "Upload Dataset Images (you can select multiple files)",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
+)
 
-mode = st.radio("Select dataset input method:", ("Upload ZIP file", "Browse Local Folder"))
-dataset_images = None
+search_image_file = st.file_uploader(
+    "Upload the Search Image",
+    type=["jpg", "jpeg", "png"]
+)
 
-# --- Option 1: Upload ZIP file ---
-if mode == "Upload ZIP file":
-    dataset_zip = st.file_uploader("📦 Upload Dataset (ZIP)", type=["zip"])
-    if dataset_zip:
-        with st.spinner("Extracting and preprocessing dataset..."):
-            dataset_images = load_dataset(dataset_zip, is_zip=True)
-        st.success(f"Loaded {len(dataset_images)} images from uploaded ZIP.")
+if dataset_files and search_image_file:
+    if st.button("Search Similar Image"):
+        with st.spinner("Processing... please wait"):
+            dataset_images = []
+            for f in dataset_files:
+                try:
+                    img = preprocess_image(f)
+                    dataset_images.append((f.name, img))
+                except Exception as e:
+                    st.warning(f"Skipped {f.name}: {e}")
 
-# --- Option 2: Browse Local Folder ---
-elif mode == "Browse Local Folder":
-    if st.button("📁 Browse Folder"):
-        root = tk.Tk()
-        root.withdraw()  # Hide Tkinter main window
-        folder_path = filedialog.askdirectory(title="Select Dataset Folder")
-        root.destroy()
-        if folder_path:
-            st.session_state["selected_folder"] = folder_path
-            st.success(f"Selected Folder: {folder_path}")
-    if "selected_folder" in st.session_state:
-        folder = st.session_state["selected_folder"]
-        with st.spinner("Loading dataset from local folder..."):
-            dataset_images = load_dataset(folder, is_zip=False)
-        st.success(f"Loaded {len(dataset_images)} images from local folder.")
+            search_image = preprocess_image(search_image_file)
+            match = search_image_in_dataset(dataset_images, search_image)
 
-# --- Upload search image ---
-search_image_file = st.file_uploader("🖼️ Upload Search Image", type=["jpg", "jpeg", "png"])
+        if match:
+            best_name, score = match
+            st.success(f"✅ Best match: **{best_name}** (Similarity: {score:.4f})")
 
-if dataset_images and search_image_file:
-    temp_search_path = os.path.join(tempfile.gettempdir(), "temp_search.jpg")
-    with open(temp_search_path, "wb") as f:
-        f.write(search_image_file.getbuffer())
-
-    st.image(temp_search_path, caption="Search Image", width=200)
-
-    if st.button("Search for Similar Image"):
-        with st.spinner("Searching for similar images..."):
-            result = search_image_in_dataset(dataset_images, temp_search_path)
-        st.write("## 🔎 Search Results")
-        if result:
-            st.success(f"✅ Match Found: {result['filename']} (Score: {result['similarity_score']:.4f})")
-            st.image(result["path"], caption=f"Matched Image: {result['filename']}")
+            # Show side-by-side images
+            col1, col2 = st.columns(2)
+            with col1:
+                st.image(search_image_file, caption="Search Image", use_container_width=True)
+            with col2:
+                matched = [f for f in dataset_files if f.name == best_name][0]
+                st.image(matched, caption=f"Matched: {best_name}", use_container_width=True)
         else:
-            st.error("❌ No similar image found in dataset.")
+            st.error("No match found.")
 else:
-    st.info("Please upload or select a dataset and upload a search image.")
+    st.info("👆 Upload both dataset and search image to begin.")
