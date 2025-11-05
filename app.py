@@ -1,29 +1,29 @@
 import streamlit as st
 import cv2
 import numpy as np
+import zipfile
+import tempfile
+import os
 from skimage.metrics import structural_similarity as ssim
 
-st.set_page_config(page_title="Image Similarity Checker", layout="centered")
+st.set_page_config(page_title="Folder Image Matching", layout="centered")
 
-st.title("🧠 Image Similarity Checker using Image Processing")
+st.title("🧠 Folder Image Matching using Image Processing")
 
 st.write("""
-Upload two images below.  
+Upload a **single image** and a **folder (ZIP file)** of images.  
 The app will:
-- Enhance and compress both images  
-- Apply morphological operations  
-- Compare them using Structural Similarity Index (SSIM)
+- Enhance, compress, and morphologically process all images  
+- Compare the single image with each image in the folder  
+- Show whether the image is present or not based on similarity
 """)
 
-# --- Image upload ---
-col1, col2 = st.columns(2)
-with col1:
-    img1_file = st.file_uploader("Upload First Image", type=["jpg", "jpeg", "png"], key="img1")
-with col2:
-    img2_file = st.file_uploader("Upload Second Image", type=["jpg", "jpeg", "png"], key="img2")
+# --- File Uploads ---
+query_file = st.file_uploader("📸 Upload the Single Image", type=["jpg", "jpeg", "png"])
+folder_zip = st.file_uploader("🗂️ Upload the Folder (as ZIP file containing images)", type=["zip"])
 
 
-# --- Helper functions ---
+# --- Helper Functions ---
 def preprocess_image(image_bytes):
     """Enhance, compress, and apply morphology to an image."""
     file_bytes = np.asarray(bytearray(image_bytes), dtype=np.uint8)
@@ -31,21 +31,21 @@ def preprocess_image(image_bytes):
     if img is None:
         raise ValueError("Invalid image file")
 
-    # Resize to standard size for consistency
+    # Resize for consistency
     img = cv2.resize(img, (400, 400))
 
     # Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # --- Image Enhancement ---
+    # Enhancement
     enhanced = cv2.equalizeHist(gray)
 
-    # --- Compression (simulated by JPEG encoding/decoding) ---
-    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 70]  # 70% quality
+    # Compression
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 70]
     _, compressed = cv2.imencode('.jpg', enhanced, encode_param)
     compressed = cv2.imdecode(compressed, cv2.IMREAD_GRAYSCALE)
 
-    # --- Morphological Processing ---
+    # Morphological processing
     kernel = np.ones((3, 3), np.uint8)
     morph = cv2.morphologyEx(compressed, cv2.MORPH_OPEN, kernel)
     morph = cv2.morphologyEx(morph, cv2.MORPH_CLOSE, kernel)
@@ -55,38 +55,46 @@ def preprocess_image(image_bytes):
 
 def compare_images(img1, img2):
     """Compute SSIM similarity between two preprocessed images."""
-    score, diff = ssim(img1, img2, full=True)
-    diff = (diff * 255).astype("uint8")
-    return score, diff
+    score, _ = ssim(img1, img2, full=True)
+    return score
 
 
 # --- Main Logic ---
-if img1_file and img2_file:
+if query_file and folder_zip:
     with st.spinner("Processing images..."):
-        # Preprocess both images
-        img1 = preprocess_image(img1_file.read())
-        img2 = preprocess_image(img2_file.read())
+        # Preprocess the single (query) image
+        query_img = preprocess_image(query_file.read())
 
-        # Compare
-        similarity_score, diff = compare_images(img1, img2)
+        # Create temp directory for extracted folder
+        temp_dir = tempfile.mkdtemp()
+        with zipfile.ZipFile(folder_zip, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
 
-        st.success(f"✅ Similarity Score: **{similarity_score:.4f}**")
+        matched_files = []
+        threshold = 0.9  # similarity threshold
 
-        if similarity_score > 0.95:
-            st.write("🟢 The images are **Identical or Nearly Identical.**")
-        elif similarity_score > 0.8:
-            st.write("🟡 The images are **Similar but not exactly same.**")
+        # Iterate through all extracted files
+        for file_name in os.listdir(temp_dir):
+            file_path = os.path.join(temp_dir, file_name)
+            if not file_name.lower().endswith((".jpg", ".jpeg", ".png")):
+                continue
+
+            with open(file_path, "rb") as f:
+                folder_img = preprocess_image(f.read())
+
+            score = compare_images(query_img, folder_img)
+
+            if score >= threshold:
+                matched_files.append((file_name, score))
+
+        # --- Results ---
+        if matched_files:
+            st.success(f"✅ Found {len(matched_files)} matching image(s) in the folder!")
+            for name, score in matched_files:
+                st.write(f"🔹 **{name}** — Similarity Score: `{score:.4f}`")
+                st.image(os.path.join(temp_dir, name), caption=name, use_container_width=True)
         else:
-            st.write("🔴 The images are **Different.**")
+            st.error("❌ No matching image found in the folder.")
 
-        # Display images and difference map
-        st.subheader("🔍 Comparison Results")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.image(img1, caption="Processed Image 1", use_container_width=True)
-        with c2:
-            st.image(img2, caption="Processed Image 2", use_container_width=True)
-        with c3:
-            st.image(diff, caption="Difference Map", use_container_width=True)
 else:
-    st.info("Please upload two images to start comparison.")
+    st.info("Please upload a single image and a folder (as ZIP).")
