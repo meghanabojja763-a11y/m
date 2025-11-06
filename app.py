@@ -1,6 +1,4 @@
 import streamlit as st
-st.set_option("server.maxUploadSize", 600)  # Increase ZIP upload limit to 600 MB
-
 import cv2
 import numpy as np
 import zipfile
@@ -8,6 +6,7 @@ import tempfile
 import os
 from skimage.metrics import structural_similarity as ssim
 
+# ------------------- PAGE CONFIG -------------------
 st.set_page_config(page_title="Advanced Image Matching", layout="centered")
 
 st.title("🧠 Advanced Folder Image Matching using Image Processing + ORB Features")
@@ -21,12 +20,11 @@ This tool will:
 - Find whether the image is present in the folder (even if resized or enhanced)
 """)
 
-# --- File Uploads ---
+# ------------------- FILE UPLOADS -------------------
 query_file = st.file_uploader("📸 Upload the Single Image", type=["jpg", "jpeg", "png"])
 folder_zip = st.file_uploader("🗂️ Upload the Folder (as ZIP file containing images)", type=["zip"])
 
-
-# --- Helper Functions ---
+# ------------------- HELPER FUNCTIONS -------------------
 def preprocess_image(image_bytes):
     """Enhance, morphologically filter, and prepare an image for matching."""
     file_bytes = np.asarray(bytearray(image_bytes), dtype=np.uint8)
@@ -98,7 +96,7 @@ def extract_all_images(zip_path, extract_to):
     return image_paths
 
 
-# --- Main Logic ---
+# ------------------- MAIN LOGIC -------------------
 if query_file and folder_zip:
     with st.spinner("Processing images..."):
         query_img = preprocess_image(query_file.read())
