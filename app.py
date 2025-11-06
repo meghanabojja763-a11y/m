@@ -1,4 +1,6 @@
 import streamlit as st
+st.set_option("server.maxUploadSize", 600)  # Increase ZIP upload limit to 600 MB
+
 import cv2
 import numpy as np
 import zipfile
