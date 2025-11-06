@@ -133,9 +133,5 @@ if query_file and folder_zip:
                 st.image(path, caption=f"Matched Image (Score: {comb:.3f})", use_container_width=True)
         else:
             st.error("❌ No matching image found.")
-            st.subheader("🔍 Top 3 Closest Images (for reference):")
-            for path, orb_s, ssim_s, comb in sorted(all_results, key=lambda x: x[3], reverse=True)[:3]:
-                st.write(f"**{os.path.basename(path)}** — ORB: `{orb_s:.3f}`, SSIM: `{ssim_s:.3f}`, Combined: `{comb:.3f}`")
-                st.image(path, caption=f"Top Similar Image (Score: {comb:.3f})", use_container_width=True)
 else:
     st.info("Please upload a single image and a folder (as ZIP).")
