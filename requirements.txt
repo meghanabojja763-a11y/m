@@ -2,4 +2,5 @@ streamlit
 opencv-python-headless
 numpy
 scikit-image
-tensorflow
+# TensorFlow is optional; uncomment if you want DL
+# tensorflow
