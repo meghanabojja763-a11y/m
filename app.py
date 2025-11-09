@@ -112,7 +112,6 @@ if query_file and folder_zip:
         image_paths = extract_all_images(folder_zip, temp_dir)
         st.info(f"Found {len(image_paths)} images in the folder.")
 
-        matches = []
         orb_threshold = 0.6
         ssim_threshold = 0.7
         deep_threshold = 0.85  # Only used if DL is enabled
@@ -120,6 +119,9 @@ if query_file and folder_zip:
         if DL_OK:
             resnet_model = load_resnet_model()
             query_features = extract_resnet_features(resnet_model, query_bytes)
+
+        best_match = None
+        best_combined = -1
 
         for path in image_paths:
             with open(path, "rb") as f:
@@ -135,18 +137,21 @@ if query_file and folder_zip:
 
             combined = (0.4 * orb_score) + (0.3 * ssim_score) + (0.3 * deep_score if DL_OK else 0.0)
 
+            # Check thresholds
             if orb_score >= orb_threshold or ssim_score >= ssim_threshold or (DL_OK and deep_score >= deep_threshold):
-                matches.append((path, orb_score, ssim_score, deep_score, combined))
+                if combined > best_combined:
+                    best_combined = combined
+                    best_match = (path, orb_score, ssim_score, deep_score, combined)
 
-        if matches:
-            st.success(f"✅ Found {len(matches)} possible match(es)!")
-            for path, orb_s, ssim_s, deep_s, comb in sorted(matches, key=lambda x: x[4], reverse=True):
-                st.write(
-                    f"**{os.path.basename(path)}** — ORB: `{orb_s:.3f}`, SSIM: `{ssim_s:.3f}`"
-                    + (f", DL: `{deep_s:.3f}`" if DL_OK else "")
-                    + f", Combined: `{comb:.3f}`"
-                )
-                st.image(path, caption=f"Matched Image (Score: {comb:.3f})", use_container_width=True)
+        if best_match:
+            path, orb_s, ssim_s, deep_s, comb = best_match
+            st.success("✅ Best match found!")
+            st.write(
+                f"**{os.path.basename(path)}** — ORB: `{orb_s:.3f}`, SSIM: `{ssim_s:.3f}`"
+                + (f", DL: `{deep_s:.3f}`" if DL_OK else "")
+                + f", Combined: `{comb:.3f}`"
+            )
+            st.image(path, caption=f"Matched Image (Score: {comb:.3f})", use_container_width=True)
         else:
             st.error("❌ No matching image found.")
 else:
