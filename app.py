@@ -126,17 +126,13 @@ def img_to_embedding_bgr(img_bgr, backbone, preprocess, device):
     img_bgr: OpenCV BGR image (H, W, 3)
     Returns L2-normalized embedding vector (2048,)
     """
-    # Convert BGR -> RGB
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    # To PIL-like tensor via torchvision preprocess (handles resize/crop/normalize)
-    # Preprocess expects PIL Image or tensor in [0,1] RGB order
     import PIL.Image as Image
     pil_img = Image.fromarray(img_rgb)
-    x = preprocess(pil_img).unsqueeze(0).to(device)  # (1,3,224,224)
+    x = preprocess(pil_img).unsqueeze(0).to(device)
     with torch.no_grad():
-        feat = backbone(x)  # (1,2048,1,1)
-    feat = feat.view(-1)   # (2048,)
-    # L2 normalize
+        feat = backbone(x)
+    feat = feat.view(-1)
     feat = feat / (torch.norm(feat) + 1e-9)
     return feat.cpu().numpy()
 
@@ -145,7 +141,6 @@ def dl_cosine_similarity(img_bgr_a, img_bgr_b, backbone, preprocess, device):
         va = img_to_embedding_bgr(img_bgr_a, backbone, preprocess, device)
         vb = img_to_embedding_bgr(img_bgr_b, backbone, preprocess, device)
         cos = float(np.dot(va, vb))
-        # map cosine [-1,1] -> [0,1] for uniformity
         return (cos + 1.0) / 2.0
     except Exception:
         return 0.0
@@ -165,7 +160,6 @@ def extract_all_images(zip_path, extract_to):
 # ------------------- MAIN LOGIC -------------------
 if query_file and folder_zip:
     with st.spinner("Processing images..."):
-        # Prepare ORB/SSIM versions
         query_bytes = query_file.read()
         query_img_proc = preprocess_image(query_bytes)
 
@@ -173,7 +167,6 @@ if query_file and folder_zip:
         image_paths = extract_all_images(folder_zip, temp_dir)
         st.info(f"Found {len(image_paths)} images in the folder.")
 
-        # Prepare DL (optional if libs available)
         use_dl = True
         if not _DL_OK:
             use_dl = False
@@ -186,10 +179,9 @@ if query_file and folder_zip:
         if use_dl:
             try:
                 backbone, preprocess_t = load_resnet50_backbone()
-                device = "cuda" if False and torch.cuda.is_available() else "cpu"  # keep CPU default for simplicity
+                device = "cuda" if False and torch.cuda.is_available() else "cpu"
                 if device == "cuda":
                     backbone.to(device)
-                # Read a color image for DL from the query file (re-read original bytes)
                 query_img_color_for_dl = read_color_for_dl(query_bytes)
             except Exception as e:
                 use_dl = False
@@ -198,7 +190,6 @@ if query_file and folder_zip:
         matches = []
         all_results = []
 
-        # Progress bar
         prog = st.progress(0.0)
         n = max(1, len(image_paths))
 
@@ -206,13 +197,10 @@ if query_file and folder_zip:
             with open(path, "rb") as f:
                 folder_bytes = f.read()
 
-            # ORB/SSIM images (grayscale enhanced)
             folder_img_proc = preprocess_image(folder_bytes)
-
             orb_score = orb_similarity(query_img_proc, folder_img_proc)
             ssim_score = ssim_similarity(query_img_proc, folder_img_proc)
 
-            # DL score
             dl_score = 0.0
             if use_dl:
                 try:
@@ -223,12 +211,9 @@ if query_file and folder_zip:
                 except Exception:
                     dl_score = 0.0
 
-            # Combined score
             combined = (w_dl * dl_score) + (w_orb * orb_score) + (w_ssim * ssim_score)
-
             all_results.append((path, orb_score, ssim_score, dl_score, combined))
 
-            # If any method is confident OR combined is strong -> mark as match
             if (orb_score >= orb_threshold) or (ssim_score >= ssim_threshold) or (dl_score >= dl_threshold):
                 matches.append((path, orb_score, ssim_score, dl_score, combined))
 
@@ -246,15 +231,6 @@ if query_file and folder_zip:
                 st.image(path, caption=f"Matched Image (Combined: {comb:.3f})", use_container_width=True)
         else:
             st.error("❌ No matching image found.")
-
-        # Optional: show top-5 by combined score (even if not above thresholds)
-        if len(all_results) > 0:
-            st.subheader("Top-5 by Combined Score (for inspection)")
-            for path, orb_s, ssim_s, dl_s, comb in sorted(all_results, key=lambda x: x[4], reverse=True)[:5]:
-                st.write(
-                    f"{os.path.basename(path)} — DL: `{dl_s:.3f}`, ORB: `{orb_s:.3f}`, "
-                    f"SSIM: `{ssim_s:.3f}`, Combined: `{comb:.3f}`"
-                )
 
 else:
     st.info("Please upload a single image and a folder (as ZIP).")
