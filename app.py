@@ -21,7 +21,7 @@ except Exception as e:
     _SSIM_ERR = str(e)
 
 # ------------------- PAGE CONFIG -------------------
-st.set_page_config(page_title="Advanced Image Matching", layout="centered")
+st.set_page_config(page_title="🧠 Advanced Image Matching", layout="centered")
 
 st.title("🧠 Advanced Folder Image Matching (Image Processing + ORB + SSIM + DL)")
 
@@ -29,9 +29,9 @@ st.write("""
 Upload a **single image** and a **folder (ZIP)** of images.  
 This tool will:
 - Enhance + morphologically process images  
-- Extract visual features using ORB (feature matching)  
+- Extract visual features using ORB  
 - Compare using SSIM (pixel-based)  
-- 🔥 **Deep Learning**: CNN embeddings (ResNet-50) + cosine similarity  
+- 🔥 Deep Learning: CNN embeddings (ResNet-50) + cosine similarity  
 - Find whether the image is present in the folder (robust to resize/enhance)
 """)
 
