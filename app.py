@@ -1,79 +1,60 @@
 import streamlit as st
 from ultralytics import YOLO
-import cv2
-import numpy as np
 from PIL import Image
+import numpy as np
+import cv2
 
-st.title("🖼️ YOLOv9 Live Face/Object Detection")
+st.title("🔍 YOLOv9 Object Detection")
 
+# Load model (auto-downloads, CPU only)
 @st.cache_resource
 def load_model():
-    """Load YOLOv9 model (auto-downloads on first run)."""
-    model = YOLO("yolov9-c.pt")  # General; swap to "yolov9-c-face.pt" for faces
-    model.to('cpu')  # Force CPU for Streamlit Cloud
+    model = YOLO("yolov8n.pt")  # Use YOLOv8 (more stable than v9 on cloud)
     return model
 
 model = load_model()
 
-@st.cache_data
-def preprocess_image(image):
-    """Resize to 640x640 and normalize."""
-    img_array = np.array(image)
-    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    img_resized = cv2.resize(img_bgr, (640, 640))
-    return img_resized.astype(np.float32) / 255.0
+# Sidebar confidence slider
+conf_threshold = st.sidebar.slider("Confidence", 0.1, 1.0, 0.5)
 
-# Live camera input (works seamlessly on deployment)
-st.header("📹 Live Webcam Detection")
-camera_img = st.camera_input("Capture live image")
-if camera_img:
-    image = Image.open(camera_img)
-    st.image(image, caption="Original Image", use_column_width=True)
+# Live camera
+st.header("📸 Live Camera")
+camera_image = st.camera_input("Take a photo")
+if camera_image:
+    image = Image.open(camera_image)
+    st.image(image, caption="Original", use_column_width=True)
     
-    # Preprocess and detect
-    preprocessed = preprocess_image(image)
-    with st.spinner("Detecting..."):
-        results = model(preprocessed, conf=0.5, device='cpu', verbose=False)
+    # Detect
+    results = model(image, conf=conf_threshold, verbose=False)
+    annotated_image = results[0].plot()
+    st.image(annotated_image, caption="Detected Objects", use_column_width=True)
     
-    annotated = results[0].plot()
-    st.image(annotated, caption="Detected Objects (e.g., faces, people)", use_column_width=True)
-    
-    # Print results
-    st.subheader("Detection Output")
-    boxes = results[0].boxes
-    if boxes is not None:
-        for i, box in enumerate(boxes):
+    # Show results
+    st.subheader("Results")
+    if results[0].boxes is not None:
+        for box in results[0].boxes:
             cls = int(box.cls[0])
             conf = float(box.conf[0])
             label = model.names[cls]
-            st.write(f"{label}: {conf:.2f} confidence")
+            st.write(f"**{label}**: {conf:.2f}")
     else:
-        st.write("No detections found.")
+        st.write("No objects detected")
 
-# Image upload fallback
+# Upload image
 st.header("📁 Upload Image")
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Choose image", type=['png','jpeg','jpg'])
 if uploaded_file:
     image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+    st.image(image, caption="Original", use_column_width=True)
     
-    preprocessed = preprocess_image(image)
-    with st.spinner("Detecting..."):
-        results = model(preprocessed, conf=0.5, device='cpu', verbose=False)
+    results = model(image, conf=conf_threshold, verbose=False)
+    annotated_image = results[0].plot()
+    st.image(annotated_image, caption="Detected Objects", use_column_width=True)
     
-    annotated = results[0].plot()
-    st.image(annotated, caption="Detected Objects", use_column_width=True)
-    
-    # Print results
-    st.subheader("Detection Output")
-    boxes = results[0].boxes
-    if boxes is not None:
-        for i, box in enumerate(boxes):
+    st.subheader("Results")
+    if results[0].boxes is not None:
+        for box in results[0].boxes:
             cls = int(box.cls[0])
             conf = float(box.conf[0])
             label = model.names[cls]
-            st.write(f"{label}: {conf:.2f} confidence")
-    else:
-        st.write("No detections found.")
-
-st.info("💡 Tips: First run downloads model (~50MB). Use 'face' models from Ultralytics for better faces. Refresh for new detections.")
+            st.write(f"**{label}**: {conf:.2f}")
