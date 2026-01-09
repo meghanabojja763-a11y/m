@@ -1,66 +1,79 @@
 import streamlit as st
 from ultralytics import YOLO
 import cv2
-from PIL import Image
 import numpy as np
-import torch
+from PIL import Image
 
-st.title("Live YOLOv9 Face/Object Detection")
+st.title("🖼️ YOLOv9 Live Face/Object Detection")
 
-# Load YOLOv9 model (use yolov9-c face weights or general; download auto on first run)
 @st.cache_resource
 def load_model():
-    model = YOLO("yolov9-c.pt")  # Or face-specific: "https://github.com/WongKinYiu/yolov9/releases/download/v0.1/yolov9-c-face.pt"
+    """Load YOLOv9 model (auto-downloads on first run)."""
+    model = YOLO("yolov9-c.pt")  # General; swap to "yolov9-c-face.pt" for faces
+    model.to('cpu')  # Force CPU for Streamlit Cloud
     return model
 
 model = load_model()
 
-# Preprocessing function
+@st.cache_data
 def preprocess_image(image):
-    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    image = cv2.resize(image, (640, 640))
-    image = image / 255.0  # Normalize
-    return image
+    """Resize to 640x640 and normalize."""
+    img_array = np.array(image)
+    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    img_resized = cv2.resize(img_bgr, (640, 640))
+    return img_resized.astype(np.float32) / 255.0
 
-# Streamlit pages
-tab1, tab2 = st.tabs(["Live Webcam", "Upload Image"])
-
-with tab1:
-    st.header("Live Detection")
-    frame_window = st.image([])
-    camera = cv2.VideoCapture(0)
+# Live camera input (works seamlessly on deployment)
+st.header("📹 Live Webcam Detection")
+camera_img = st.camera_input("Capture live image")
+if camera_img:
+    image = Image.open(camera_img)
+    st.image(image, caption="Original Image", use_column_width=True)
     
-    while True:
-        success, frame = camera.read()
-        if not success:
-            break
-        else:
-            # Preprocess
-            input_frame = preprocess_image(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
-            
-            # Run inference
-            results = model(input_frame, conf=0.5)
-            
-            # Draw results
-            annotated = results[0].plot()
-            frame_window.image(annotated)
-            
-        if st.button("Stop"):
-            break
-    camera.release()
+    # Preprocess and detect
+    preprocessed = preprocess_image(image)
+    with st.spinner("Detecting..."):
+        results = model(preprocessed, conf=0.5, device='cpu', verbose=False)
+    
+    annotated = results[0].plot()
+    st.image(annotated, caption="Detected Objects (e.g., faces, people)", use_column_width=True)
+    
+    # Print results
+    st.subheader("Detection Output")
+    boxes = results[0].boxes
+    if boxes is not None:
+        for i, box in enumerate(boxes):
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            label = model.names[cls]
+            st.write(f"{label}: {conf:.2f} confidence")
+    else:
+        st.write("No detections found.")
 
-with tab2:
-    st.header("Image Upload")
-    uploaded = st.file_uploader("Choose image", type=["jpg", "png"])
-    if uploaded:
-        image = Image.open(uploaded)
-        st.image(image, caption="Original")
-        
-        # Preprocess and detect
-        preprocessed = preprocess_image(image)
-        results = model(preprocessed, conf=0.5)
-        
-        annotated = results[0].plot()
-        st.image(annotated, caption="Detected (faces/objects)")
+# Image upload fallback
+st.header("📁 Upload Image")
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+if uploaded_file:
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Uploaded Image", use_column_width=True)
+    
+    preprocessed = preprocess_image(image)
+    with st.spinner("Detecting..."):
+        results = model(preprocessed, conf=0.5, device='cpu', verbose=False)
+    
+    annotated = results[0].plot()
+    st.image(annotated, caption="Detected Objects", use_column_width=True)
+    
+    # Print results
+    st.subheader("Detection Output")
+    boxes = results[0].boxes
+    if boxes is not None:
+        for i, box in enumerate(boxes):
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            label = model.names[cls]
+            st.write(f"{label}: {conf:.2f} confidence")
+    else:
+        st.write("No detections found.")
 
-st.info("Detection classes: Filter for 'face' or others via model config. Outputs bounding boxes/confidence.")
+st.info("💡 Tips: First run downloads model (~50MB). Use 'face' models from Ultralytics for better faces. Refresh for new detections.")
