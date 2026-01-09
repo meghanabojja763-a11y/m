@@ -1,6 +1,0 @@
-streamlit
-opencv-python-headless
-numpy
-scikit-image
-# TensorFlow is optional; uncomment if you want DL
-# tensorflow
